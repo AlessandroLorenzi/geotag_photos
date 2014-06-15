@@ -9,14 +9,17 @@ import sys
 from datetime import datetime,timedelta
 import exifread
 import pyexif
+import os
 # !!! yum install perl-Image-ExifTool !!!
 
 class geotag_photos:
 	def __init__(self, file_gpx, image, tdelta):
+
 		gpx = self.get_gpx(file_gpx)
 		photo_date = self.get_photo_date(image,tdelta)
 		point = self.get_coordinates(gpx,photo_date)
 		self.write_coordinates(point, image)
+
 
 	def get_gpx(self, gpx):
 		gpx_file = open( gpx, 'r' )
@@ -75,6 +78,26 @@ if __name__ == "__main__":
 		print 'Syntax: %s [-g|--gpx] file.gpx [[-t|--timediff] -02] file1.jpg [file2.jpg ... ] ' % sys.argv[0]
 		exit()
 
+	def sanitize_gpx(file_gpx):
+		if not os.access(file_gpx, os.R_OK):
+			print('File GPX not readable')
+			exit()
+
+	def sanitize_image(image):
+		if not os.access(image, os.W_OK):
+			print('File image "%s" not writable' % image)
+			exit()
+		if not os.access(image, os.R_OK):
+			print('File image "%s" not readable' % image)
+			exit()
+
+	def sanitize_tdelta(tdelta):
+		try:
+			int(tdelta)
+		except:
+			print('Time delta "%s" non valido' % tdelta)
+			exit()
+
 
 	options, remainder = getopt.getopt(sys.argv[1:], 'g:t:h', ['gpx=', 
                                                          'timezone=',
@@ -83,7 +106,7 @@ if __name__ == "__main__":
 
 
 	file_gpx = None
-	tdelta = None
+	tdelta = 0
 	h=0
 
 	for opt, arg in options:
@@ -99,6 +122,10 @@ if __name__ == "__main__":
 
 	if file_gpx == None:
 		print_help()
+	else:
+		sanitize_gpx(file_gpx)
+	
+	sanitize_tdelta(tdelta)
 
 
 	if len(remainder) == 0:
@@ -106,4 +133,6 @@ if __name__ == "__main__":
 
 
 	for image in remainder:
+		sanitize_image(image)
 		geotag_photos(file_gpx, image, tdelta)
+
