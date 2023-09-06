@@ -14,6 +14,7 @@ class GeotagPhotos:
         self,
         gpx_path: str,
         images: list[str],
+        # TODO: defualt timezone None and check gpx timezone
         timezone: str = "UTC",
     ):
         self.gpx_path = gpx_path
