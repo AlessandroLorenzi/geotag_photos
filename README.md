@@ -1,6 +1,17 @@
 Script to set geotag to photo from gpx file
 
-Syntax: ./geotag_photos.py [-g|--gpx] file.gpx [[-t|--timediff] -02] file1.jpg [file2.jpg ... ] 
+## Usage
 
-For timezome "Europe/Rome" in summer is timedelta +2, in winter +1.
+```
+geotag_photos.py [-h] -g GPX [-z TIMEZONE] IMAGE [IMAGE ...]
 
+positional arguments:
+  IMAGE                 Image file to geotag
+
+options:
+  -h, --help            show this help message and exit
+  -g GPX, --gpx GPX     File GPX to match photos to
+  -z TIMEZONE, --timezone TIMEZONE
+                        Force timezone on photos creation datetime. Must be a valid IANA timezone identifier, e.g.
+                        'Europe/Paris', or an offset '+02:00'. If not set, timezone from gpx track is used.
+```

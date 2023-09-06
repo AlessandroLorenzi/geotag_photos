@@ -2,9 +2,9 @@
 import argparse
 from typing import Optional
 from pathlib import Path
-import gpxpy.parser as parser
+import gpxpy.parser as gpxparser
 from gpxpy.gpx import GPXTrackPoint
-import pytz
+from zoneinfo import ZoneInfo
 import sys
 from datetime import datetime, timedelta
 import pyexif  # type: ignore
@@ -25,12 +25,10 @@ class GeotagPhotos:
     def __init__(
         self,
         gpx_path: Path,
-        # TODO: defualt timezone None and check gpx timezone
-        timezone: str = "UTC",
+        timezone: Optional[str] = None,
     ):
-        self.timezone = timezone
         with gpx_path.open() as f:
-            gpx_parser = parser.GPXParser(f)
+            gpx_parser = gpxparser.GPXParser(f)
             self.gpx = gpx_parser.parse()
 
         if len(self.gpx.tracks) == 0:
@@ -39,6 +37,21 @@ class GeotagPhotos:
             raise GPException("No empty track in GPX file")
         elif len(self.gpx.tracks[0].segments[0].points) == 0:
             raise GPException("Invalid track in GPX file")
+
+        if timezone is None:
+            # get timezone from first gpx point time
+            point = self.gpx.tracks[0].segments[0].points[0]
+            if point.time is None:
+                # No time... fallback to system tz
+                # getting system timezone in python seems to be quite an adventure
+                self.tzinfo = datetime.now(ZoneInfo("UTC")).astimezone().tzinfo
+            else:
+                self.tzinfo = point.time.tzinfo
+        else:
+            if timezone[0] in ("+", "-") and ":" in timezone:
+                self.tzinfo = datetime.strptime(timezone, "%z").tzinfo
+            else:
+                self.tzinfo = ZoneInfo(timezone)
 
     def geotag(self, image: Path) -> GPResult:
         photo_date = self._get_photo_date(image)
@@ -49,8 +62,8 @@ class GeotagPhotos:
         img = pyexif.ExifEditor(photo)
         datetimeoriginal: str = img.getTag("DateTimeOriginal")
         if datetimeoriginal is not None:
-            date = datetime.strptime(datetimeoriginal, "%Y:%m:%d %H:%M:%S").astimezone(
-                pytz.timezone(self.timezone)
+            date = datetime.strptime(datetimeoriginal, "%Y:%m:%d %H:%M:%S").replace(
+                tzinfo=self.tzinfo
             )
         else:
             # If there is no DateTimeOriginal, can we try using filesystem's datetime?
@@ -68,7 +81,6 @@ class GeotagPhotos:
                         # TODO: time can be None. Can be None for just one point?
                         #       we just skip points where time is None
                         continue
-
                     if photo_date > oldpoint.time and photo_date <= point.time:
                         return point
 
@@ -96,22 +108,28 @@ def main():
         "-g", "--gpx", type=Path, required=True, help="File GPX to match photos to"
     )
     parser.add_argument(
+        "-z",
+        "--timezone",
+        type=str,
+        help="Force timezone on photos creation datetime. Must be a valid IANA timezone identifier, e.g. 'Europe/Paris', or an offset '+02:00'. If not set, timezone from gpx track is used.",
+    )
+    parser.add_argument(
         "images", type=Path, metavar="IMAGE", nargs="+", help="Image file to geotag"
     )
     args = parser.parse_args()
 
     try:
-        geotagger = GeotagPhotos(args.gpx)
+        geotagger = GeotagPhotos(args.gpx, args.timezone)
         for image in args.images:
             r = geotagger.geotag(image)
             if r.point is None:
                 print(f"Position not avaiable for {image} at {r.date}")
             else:
                 print(
-                    f"Photo {image} position: {r.point.latitude}, {r.point.longitude}, {r.point.elevation}"
+                    f"Photo {image} at {r.date} position: {r.point.latitude}, {r.point.longitude}, {r.point.elevation}"
                 )
 
-    except GPException as e:
+    except Exception as e:
         sys.exit(e)
 
 
