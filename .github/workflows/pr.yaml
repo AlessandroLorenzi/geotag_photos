@@ -1,0 +1,11 @@
+on: [pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    container: "python:3.11"
+    steps:
+        - uses: actions/checkout@v2
+        - run: pip install -r requirements.txt
+        - run: pip install -r requirements-dev.txt
+        - run: black .
+        - run: mypy .
