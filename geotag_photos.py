@@ -1,120 +1,119 @@
 #!/usr/bin/env python
-
+import argparse
+from typing import Optional
+from pathlib import Path
 import gpxpy.parser as parser
+from gpxpy.gpx import GPXTrackPoint
 import pytz
-import getopt
 import sys
 from datetime import datetime, timedelta
-import pyexif
-import os
+import pyexif  # type: ignore
+from dataclasses import dataclass
+
+
+class GPException(Exception):
+    pass
+
+
+@dataclass
+class GPResult:
+    date: datetime
+    point: Optional[GPXTrackPoint]
 
 
 class GeotagPhotos:
     def __init__(
         self,
-        gpx_path: str,
-        images: list[str],
+        gpx_path: Path,
         # TODO: defualt timezone None and check gpx timezone
         timezone: str = "UTC",
     ):
-        self.gpx_path = gpx_path
-        self.images = images
         self.timezone = timezone
+        with gpx_path.open() as f:
+            gpx_parser = parser.GPXParser(f)
+            self.gpx = gpx_parser.parse()
 
-    def __call__(self):
-        self.get_gpx()
-        for image in self.images:
-            photo_date = self.get_photo_date(image)
-            point = self.get_coordinates(photo_date)
-            self.write_coordinates(point, image)
+        if len(self.gpx.tracks) == 0:
+            raise GPException("No tracks in GPX file")
+        elif len(self.gpx.tracks[0].segments) == 0:
+            raise GPException("No empty track in GPX file")
+        elif len(self.gpx.tracks[0].segments[0].points) == 0:
+            raise GPException("Invalid track in GPX file")
 
-    def get_gpx(self):
-        gpx_file = open(self.gpx_path, "r")
+    def geotag(self, image: Path) -> GPResult:
+        photo_date = self._get_photo_date(image)
+        point = self._get_coordinates(photo_date)
+        return self._write_coordinates(point, image)
 
-        gpx_parser = parser.GPXParser(gpx_file)
-        self.gpx = gpx_parser.parse()
-
-        gpx_file.close()
-
-    def get_photo_date(self, photo):
+    def _get_photo_date(self, photo: Path) -> datetime:
         img = pyexif.ExifEditor(photo)
-        date = datetime.strptime(
-            str(img.getTag("DateTimeOriginal")), "%Y:%m:%d %H:%M:%S"
-        ).astimezone(pytz.timezone(self.timezone))
+        datetimeoriginal: str = img.getTag("DateTimeOriginal")
+        if datetimeoriginal is not None:
+            date = datetime.strptime(datetimeoriginal, "%Y:%m:%d %H:%M:%S").astimezone(
+                pytz.timezone(self.timezone)
+            )
+        else:
+            # If there is no DateTimeOriginal, can we try using filesystem's datetime?
+            date = datetime.utcfromtimestamp(photo.stat().st_ctime)
         return date
 
-    def get_coordinates(self, photo_date):
+    def _get_coordinates(self, photo_date: datetime) -> Optional[GPXTrackPoint]:
         oldpoint = self.gpx.tracks[0].segments[0].points[0]
+        if oldpoint.time is None:
+            return None
         for track in self.gpx.tracks:
             for segment in track.segments:
                 for point in segment.points:
-                    if (
-                        photo_date > oldpoint.time
-                        and photo_date < point.time
-                        or photo_date == point.time
-                    ):
+                    if point.time is None:
+                        # TODO: time can be None. Can be None for just one point?
+                        #       we just skip points where time is None
+                        continue
+
+                    if photo_date > oldpoint.time and photo_date <= point.time:
                         return point
 
                     oldpoint = point
+        return None
 
-    def write_coordinates(self, point, photo):
-        img = pyexif.ExifEditor(photo)
-
+    def _write_coordinates(
+        self, point: Optional[GPXTrackPoint], photo: Path
+    ) -> GPResult:
+        date = self._get_photo_date(photo)
         # point.latitude point.longitude point.elevation  point.time
         if point is not None:
+            img = pyexif.ExifEditor(photo)
             img.setTag("GPSLatitude", point.latitude)
             img.setTag("GPSLongitude", point.longitude)
             img.setTag("GPSAltitude", point.elevation)
-            print(
-                "Photo %s position: %s, %s, %s"
-                % (photo, point.latitude, point.longitude, point.elevation)
-            )
-        else:
-            date = self.get_photo_date(photo)
-            print("Position not avaiable for %s at %s" % (photo, date))
+        return GPResult(date, point)
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Geotag photos from matching GPX track"
+    )
+    parser.add_argument(
+        "-g", "--gpx", type=Path, required=True, help="File GPX to match photos to"
+    )
+    parser.add_argument(
+        "images", type=Path, metavar="IMAGE", nargs="+", help="Image file to geotag"
+    )
+    args = parser.parse_args()
+
+    try:
+        geotagger = GeotagPhotos(args.gpx)
+        for image in args.images:
+            r = geotagger.geotag(image)
+            if r.point is None:
+                print(f"Position not avaiable for {image} at {r.date}")
+            else:
+                print(
+                    f"Photo {image} position: {r.point.latitude}, {r.point.longitude}, {r.point.elevation}"
+                )
+
+    except GPException as e:
+        sys.exit(e)
 
 
 if __name__ == "__main__":
-
-    def print_help():
-        print(
-            "Syntax: %s [-g|--gpx] file.gpx [[-t|--timediff] -02] file1.jpg [file2.jpg ... ] "
-            % sys.argv[0]
-        )
-        exit()
-
-    def sanitize_gpx(file_gpx):
-        if not os.access(file_gpx, os.R_OK):
-            print("File GPX not readable")
-            exit()
-
-    options, images = getopt.getopt(
-        sys.argv[1:],
-        "g:t:h",
-        [
-            "gpx=",
-            "timezone=",
-            "help",
-        ],
-    )
-
-    file_gpx = None
-    # TODO: make timezone optional
-    timezone = "UTC"
-    h = 0
-
-    for opt, arg in options:
-        if opt in ("-g", "--gpx"):
-            file_gpx = arg
-        elif opt in ("-t", "--timezone"):
-            timezone = arg
-        elif opt in ("-h", "--help"):
-            h = 1
-
-    if h == 1:
-        print_help()
-
-    if len(images) == 0:
-        print_help()
-
-    GeotagPhotos(file_gpx, images, timezone)()
+    main()
