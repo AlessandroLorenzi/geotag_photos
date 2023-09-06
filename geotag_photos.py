@@ -9,43 +9,48 @@ import pyexif
 import os
 
 
-class geotag_photos:
-    def __init__(self, file_gpx, image, tdelta):
-        gpx = self.get_gpx(file_gpx)
-        photo_date = self.get_photo_date(image, tdelta)
-        point = self.get_coordinates(gpx, photo_date)
-        self.write_coordinates(point, image)
+class GeotagPhotos:
+    def __init__(
+        self,
+        gpx_path: str,
+        images: list[str],
+        timezone: str = "UTC",
+    ):
+        self.gpx_path = gpx_path
+        self.images = images
+        self.timezone = timezone
 
-    def get_gpx(self, gpx):
-        gpx_file = open(gpx, "r")
+    def __call__(self):
+        self.get_gpx()
+        for image in self.images:
+            photo_date = self.get_photo_date(image)
+            point = self.get_coordinates(photo_date)
+            self.write_coordinates(point, image)
+
+    def get_gpx(self):
+        gpx_file = open(self.gpx_path, "r")
 
         gpx_parser = parser.GPXParser(gpx_file)
-        gpx_parser.parse()
+        self.gpx = gpx_parser.parse()
 
         gpx_file.close()
 
-        gpx = gpx_parser.get_gpx()
-        return gpx
-
-    def get_photo_date(self, photo, tdelta=None):
+    def get_photo_date(self, photo):
         img = pyexif.ExifEditor(photo)
-        photo_date = img.getTag("DateTimeOriginal")
-        photo_date = datetime.strptime(str(photo_date), "%Y:%m:%d %H:%M:%S")
-        if tdelta is not None:
-            photo_date = photo_date + timedelta(hours=int(tdelta))
+        date = datetime.strptime(
+            str(img.getTag("DateTimeOriginal")), "%Y:%m:%d %H:%M:%S"
+        ).astimezone(pytz.timezone(self.timezone))
+        return date
 
-        photo_date = photo_date.replace(tzinfo=pytz.UTC)
-        return photo_date
-
-    def get_coordinates(self, gpx, photo_date):
-        oldpoint = gpx.tracks[0].segments[0].points[0]
-        for track in gpx.tracks:
+    def get_coordinates(self, photo_date):
+        oldpoint = self.gpx.tracks[0].segments[0].points[0]
+        for track in self.gpx.tracks:
             for segment in track.segments:
                 for point in segment.points:
                     if (
-                        photo_date > oldpoint.time.replace(tzinfo=pytz.timezone("UTC"))
-                        and photo_date < point.time.replace(tzinfo=pytz.timezone("UTC"))
-                        or photo_date == point.time.replace(tzinfo=pytz.timezone("UTC"))
+                        photo_date > oldpoint.time
+                        and photo_date < point.time
+                        or photo_date == point.time
                     ):
                         return point
 
@@ -64,7 +69,8 @@ class geotag_photos:
                 % (photo, point.latitude, point.longitude, point.elevation)
             )
         else:
-            print("Position not avaiable for %s" % (photo))
+            date = self.get_photo_date(photo)
+            print("Position not avaiable for %s at %s" % (photo, date))
 
 
 if __name__ == "__main__":
@@ -81,22 +87,7 @@ if __name__ == "__main__":
             print("File GPX not readable")
             exit()
 
-    def sanitize_image(image):
-        if not os.access(image, os.W_OK):
-            print('File image "%s" not writable' % image)
-            exit()
-        if not os.access(image, os.R_OK):
-            print('File image "%s" not readable' % image)
-            exit()
-
-    def sanitize_tdelta(tdelta):
-        try:
-            int(tdelta)
-        except ValueError:
-            print('Time delta "%s" non valido' % tdelta)
-            exit()
-
-    options, remainder = getopt.getopt(
+    options, images = getopt.getopt(
         sys.argv[1:],
         "g:t:h",
         [
@@ -107,31 +98,22 @@ if __name__ == "__main__":
     )
 
     file_gpx = None
-    tdelta = 0
+    # TODO: make timezone optional
+    timezone = "UTC"
     h = 0
 
     for opt, arg in options:
         if opt in ("-g", "--gpx"):
             file_gpx = arg
         elif opt in ("-t", "--timezone"):
-            tdelta = arg
+            timezone = arg
         elif opt in ("-h", "--help"):
             h = 1
 
     if h == 1:
         print_help()
 
-    if file_gpx is None:
-        print("GPX file not specified")
-        print_help()
-    else:
-        sanitize_gpx(file_gpx)
-
-    sanitize_tdelta(tdelta)
-
-    if len(remainder) == 0:
+    if len(images) == 0:
         print_help()
 
-    for image in remainder:
-        sanitize_image(image)
-        geotag_photos(file_gpx, image, tdelta)
+    GeotagPhotos(file_gpx, images, timezone)()
