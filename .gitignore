@@ -1,3 +1,4 @@
 *.pyc
 test_files
 .vscode
+.mypy_cache
