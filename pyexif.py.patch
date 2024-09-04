@@ -1,0 +1,6 @@
+# venv/lib/python3.12/site-packages/pyexif/pyexif.py
+36c36,37
+<             if stderr.startswith("Warning: Bad ExifIFD directory") and fpath is not None and retry:
+---
+>             if (stderr.startswith("Warning: Bad ExifIFD directory") or "Error reading OtherImageStart data in IFD0" in stderr) \
+>                     and fpath is not None and retry:
